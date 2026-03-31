@@ -1,0 +1,29 @@
+# Training configuration for PvZ-RL (Steam OG game)
+# Usage: python scripts/train.py --config configs/train_steam.yaml
+
+environment:
+  type: steam
+  obs_width: 160
+  obs_height: 120
+  step_delay: 0.15
+  auto_collect_sun: true
+  tray_slots: 7
+  render_mode: rgb_array
+
+agent:
+  algorithm: ppo
+  device: auto
+  policy_kwargs:
+    features_dim: 256
+
+training:
+  total_timesteps: 100_000
+  eval_freq: 5_000
+  n_eval_episodes: 1       # only 1 because real-time is slow
+  save_freq: 10_000
+  checkpoint_dir: checkpoints
+  tensorboard_log: runs
+  seed: null               # no seed for real game
+
+curriculum:
+  enabled: false

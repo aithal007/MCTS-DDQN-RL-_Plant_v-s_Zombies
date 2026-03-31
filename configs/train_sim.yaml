@@ -1,0 +1,37 @@
+# Training configuration for PvZ-RL
+# Usage: python scripts/train.py --config configs/train_sim.yaml
+
+environment:
+  type: sim                # "sim" or "steam"
+  difficulty: 1            # 1-10 (sim only)
+  render_mode: null        # null, "human", or "rgb_array"
+  use_action_mask: true    # enable action masking (sim only)
+
+agent:
+  algorithm: ppo           # "ppo", "dqn", or "maskable_ppo"
+  device: auto             # "auto", "cpu", or "cuda"
+  policy_kwargs:
+    features_dim: 256
+    net_arch: [256, 128]
+
+training:
+  total_timesteps: 500_000
+  eval_freq: 10_000        # evaluate every N steps
+  n_eval_episodes: 5
+  save_freq: 50_000        # save checkpoint every N steps
+  checkpoint_dir: checkpoints
+  tensorboard_log: runs
+  seed: 42
+
+# Curriculum: gradually increase difficulty during training
+curriculum:
+  enabled: true
+  stages:
+    - timesteps: 0
+      difficulty: 1
+    - timesteps: 100_000
+      difficulty: 2
+    - timesteps: 250_000
+      difficulty: 3
+    - timesteps: 400_000
+      difficulty: 5
