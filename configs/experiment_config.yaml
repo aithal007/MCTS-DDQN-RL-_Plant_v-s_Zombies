@@ -1,0 +1,51 @@
+# Master experiment configuration
+# Usage: python scripts/run_experiments.py --config configs/experiment_config.yaml
+
+# Global settings
+device: cpu
+base_seed: 42
+num_seeds: 3          # runs per configuration
+
+# Phase 1: Reward Ablation
+reward_ablation:
+  algorithms: [ppo, dqn, a2c]
+  reward_schemes: [sparse, kill_penalty, wave_bonus, time_penalty, potential]
+  difficulty: 1
+  timesteps: 200000
+  eval_episodes: 20
+
+# Phase 2: Algorithm Comparison
+algorithm_comparison:
+  algorithms: [ppo, dqn, a2c, mcts_ddqn]
+  reward_scheme: wave_bonus    # best from Phase 1 (or override)
+  difficulty: 1
+  timesteps: 300000
+  mcts_episodes: 300           # for MCTS+DDQN
+  eval_episodes: 20
+
+# Phase 3: MCTS Ablation
+mcts_ablation:
+  simulation_counts: [0, 10, 25, 50, 100]
+  reward_scheme: wave_bonus
+  difficulty: 1
+  episodes: 300
+  eval_episodes: 20
+
+# Reward function hyperparameters to test
+reward_params:
+  kill_penalty:
+    alpha: [0.5, 1.0, 2.0]    # zombie kill reward
+    beta: [0.5, 1.0, 2.0]     # plant loss penalty
+    delta: [25, 50, 100]       # game-over penalty
+  wave_bonus:
+    eta: [5, 10, 20]           # wave completion bonus
+  time_penalty:
+    tau: [0.005, 0.01, 0.05]   # per-step penalty
+  potential:
+    kappa: [0.5, 1.0, 2.0]    # potential scaling
+
+# Statistical tests
+statistics:
+  significance_level: 0.05
+  correction: bonferroni       # or none
+  min_samples: 3

@@ -1,0 +1,43 @@
+# MCTS + DDQN training configuration
+# Usage: python scripts/train_mcts.py --config configs/train_mcts.yaml
+
+# Environment
+difficulty: 1
+reward_scheme: wave_bonus     # sparse, kill_penalty, wave_bonus, time_penalty, potential
+
+# MCTS Parameters
+num_simulations: 50           # tree search rollouts per decision (10-200)
+c_puct: 1.5                  # PUCT exploration constant
+temperature: 1.0              # initial action selection temperature
+temperature_decay: 0.995      # temperature decay per episode
+
+# DDQN Parameters
+lr: 0.0001                    # learning rate (Adam)
+gamma: 0.99                   # discount factor
+batch_size: 256
+buffer_size: 100000           # replay buffer capacity
+target_update_freq: 1000      # steps between target net sync
+
+# Exploration
+epsilon_start: 1.0
+epsilon_end: 0.05
+epsilon_decay_steps: 50000
+
+# Network Architecture
+hidden_dim: 256               # hidden layer width
+num_res_blocks: 4             # residual blocks in policy-value net
+
+# Training
+num_episodes: 5000
+max_steps_per_episode: 10000
+mcts_policy_weight: 1.0       # weight for policy distillation loss
+
+# Evaluation
+eval_freq: 50                 # evaluate every N episodes
+eval_episodes: 10
+
+# Checkpointing
+checkpoint_dir: checkpoints/mcts_ddqn
+log_dir: runs/mcts_ddqn
+seed: 42
+device: cpu                   # cpu or cuda

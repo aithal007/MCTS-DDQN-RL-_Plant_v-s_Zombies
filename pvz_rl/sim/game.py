@@ -97,7 +97,7 @@ class GameState:
     """Complete mutable game state."""
 
     tick: int = 0
-    sun: int = 50
+    sun: int = 1000
     plants: list[Plant] = field(default_factory=list)
     zombies: list[Zombie] = field(default_factory=list)
     projectiles: list[Projectile] = field(default_factory=list)
@@ -119,6 +119,8 @@ class GameState:
     total_sun_collected: int = 0
     total_sun_spent: int = 0
     damage_dealt: int = 0
+    projectile_hits: int = 0
+    wasted_placements: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +194,12 @@ class PvZEngine:
         # Instant-use plants (cherry bomb)
         if stats.get("instant"):
             self._detonate_plant(s, plant)
+
+        # Check for wasted placements (placing shooters in empty rows)
+        if ptype in (PlantType.PEASHOOTER, PlantType.SNOWPEA, PlantType.REPEATER):
+            zombies_in_row = any(z.row == row and z.hp > 0 for z in s.zombies)
+            if not zombies_in_row:
+                s.wasted_placements += 1
 
         return True
 
@@ -312,6 +320,7 @@ class PvZEngine:
                     dmg = min(p.damage, z.hp)
                     z.hp -= p.damage
                     s.damage_dealt += dmg
+                    s.projectile_hits += 1
                     if p.is_frozen:
                         z.slowed_ticks = 300  # ~10 s slow
                     hit = True

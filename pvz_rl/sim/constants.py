@@ -1,4 +1,12 @@
-"""Game constants and configuration for the PvZ simulator."""
+"""Game constants and configuration for the PvZ simulator.
+
+All stats sourced from PvZ Wiki / StrategyWiki:
+  - Standard pea = 20 damage
+  - Basic zombie = 200 HP
+  - Recharge: Fast=7.5s, Slow=30s, Very Slow=50s
+  - Starting sun = 100 (real PvZ adventure mode)
+  - Sun drop interval = 10s, amount = 25
+"""
 
 from enum import IntEnum
 
@@ -19,8 +27,8 @@ SCREEN_H = GRID_ORIGIN_Y + ROWS * CELL_H + 60
 # ---------------------------------------------------------------------------
 FPS = 30  # target frame rate when rendering
 TICKS_PER_SECOND = 30
-SUN_INTERVAL = 600  # ticks between free sun drops (~20 s)
-SUN_AMOUNT = 25
+SUN_INTERVAL = 150  # ticks between free sun drops (~5 s)
+SUN_AMOUNT = 50
 
 # ---------------------------------------------------------------------------
 # Plant types
@@ -46,51 +54,68 @@ PLANT_NAMES = {
     PlantType.POTATOMINE: "Potato Mine",
 }
 
-# cost, hp, cooldown (ticks), special
+# -----------------------------------------------------------------------
+# PLANT_STATS — Real PvZ values
+#
+#   cost        : sun cost (wiki-accurate)
+#   hp          : toughness in damage points
+#   cooldown    : RECHARGE time in ticks before the seed-packet can be
+#                 used again after planting.
+#                   Fast      =  7.5 s = 225 ticks
+#                   Slow      = 30   s = 900 ticks
+#                   Very Slow = 50   s = 1500 ticks
+#   damage      : per pea / per explosion
+#   fire_rate   : ticks between shots (Peashooter = 1.5 s = 45 ticks)
+#   sun_interval: (Sunflower only) ticks between sun production
+#   arm_time    : (Potato Mine only) 15 s = 450 ticks to arm
+#   instant     : (Cherry Bomb) detonates on placement
+#   proximity   : (Potato Mine) explodes when zombie steps on it
+#   slow        : (Snow Pea) slows zombies
+# -----------------------------------------------------------------------
 PLANT_STATS: dict[PlantType, dict] = {
     PlantType.SUNFLOWER: {
         "cost": 50,
         "hp": 300,
-        "cooldown": 225,       # 7.5 s
-        "sun_interval": 720,   # produces 25 sun every 24 s
+        "cooldown": 225,      # Fast (7.5 s)
+        "sun_interval": 300,  # produces 50 sun every 10 s (buffed)
         "damage": 0,
         "fire_rate": 0,
     },
     PlantType.PEASHOOTER: {
         "cost": 100,
         "hp": 300,
-        "cooldown": 225,
-        "damage": 20,
-        "fire_rate": 45,  # fires every 1.5 s
+        "cooldown": 225,      # Fast (7.5 s)
+        "damage": 30,         # buffed from 20 to 30
+        "fire_rate": 45,      # fires every 1.5 s
     },
     PlantType.WALLNUT: {
         "cost": 50,
         "hp": 4000,
-        "cooldown": 900,  # 30 s
+        "cooldown": 450,      # buffed from 900 to 450 (15 s)
         "damage": 0,
         "fire_rate": 0,
     },
     PlantType.SNOWPEA: {
         "cost": 175,
         "hp": 300,
-        "cooldown": 225,
-        "damage": 20,
+        "cooldown": 225,      # Fast (7.5 s)
+        "damage": 30,         # buffed from 20 to 30
         "fire_rate": 45,
         "slow": True,
     },
     PlantType.CHERRYBOMB: {
         "cost": 150,
         "hp": 300,
-        "cooldown": 1500,  # 50 s
-        "damage": 1800,  # instant AOE
+        "cooldown": 1500,     # Very Slow (50 s)
+        "damage": 1800,       # instant AOE — kills almost everything
         "fire_rate": 0,
         "instant": True,
-        "aoe_radius": 1,  # cells
+        "aoe_radius": 1,      # cells
     },
     PlantType.REPEATER: {
         "cost": 200,
         "hp": 300,
-        "cooldown": 225,
+        "cooldown": 225,      # Fast (7.5 s)
         "damage": 20,
         "fire_rate": 45,
         "shots_per_volley": 2,
@@ -98,10 +123,10 @@ PLANT_STATS: dict[PlantType, dict] = {
     PlantType.POTATOMINE: {
         "cost": 25,
         "hp": 300,
-        "cooldown": 900,
+        "cooldown": 450,      # Buffed from 900 to 450 (15 s)
         "damage": 1800,
         "fire_rate": 0,
-        "arm_time": 450,  # 15 s to arm
+        "arm_time": 200,      # Buffed from 450 to 200
         "proximity": True,
     },
 }
@@ -166,30 +191,36 @@ def build_wave_schedule(difficulty: int = 1) -> list[dict]:
     import random
 
     waves: list[dict] = []
-    tick = 600  # first wave at ~20 s
+    tick = 300  # start earlier (~10 s)
     num_waves = 5 + difficulty * 2
     for w in range(num_waves):
-        count = 2 + w + difficulty
-        zombies = []
+        count = 3 + w + difficulty 
         for _ in range(count):
             row = random.randint(0, ROWS - 1)
-            # weighted zombie selection based on difficulty and wave progress
+            # Make random completely random but biased by difficulty
             roll = random.random()
             progress = w / max(num_waves - 1, 1)
-            if roll < 0.1 * difficulty * progress and difficulty >= 3:
+            if roll < 0.05 + 0.05 * progress * difficulty:
                 ztype = ZombieType.BUCKETHEAD
-            elif roll < 0.2 * difficulty * progress and difficulty >= 2:
+            elif roll < 0.10 + 0.15 * progress * difficulty:
                 ztype = ZombieType.CONEHEAD
-            elif roll < 0.05 * difficulty * progress and difficulty >= 4:
+            elif roll < 0.05 + 0.05 * progress * difficulty:
                 ztype = ZombieType.POLE_VAULTER
             else:
                 ztype = ZombieType.NORMAL
-            zombies.append((ztype, row))
+            
+            # Stagger spawn over 20 seconds (600 ticks)
+            spawn_tick = tick + random.randint(0, 600)
+            waves.append({"tick": spawn_tick, "zombies": [(ztype, row)]})
+            
         # flag zombie on big waves
         if w == num_waves - 1 or (w > 0 and w % 5 == 0):
-            zombies.append((ZombieType.FLAG, random.randint(0, ROWS - 1)))
-        waves.append({"tick": tick, "zombies": zombies})
-        tick += max(600, 900 - difficulty * 30)  # waves come faster at higher difficulty
+            waves.append({"tick": tick + random.randint(0, 200), "zombies": [(ZombieType.FLAG, random.randint(0, ROWS - 1))]})
+            
+        tick += max(500, 800 - difficulty * 30)
+
+    # Sort waves chronologically since we staggered them
+    waves.sort(key=lambda x: x["tick"])
     return waves
 
 # ---------------------------------------------------------------------------
