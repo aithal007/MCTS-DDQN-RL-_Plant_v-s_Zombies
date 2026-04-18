@@ -76,7 +76,7 @@ PLANT_STATS: dict[PlantType, dict] = {
     PlantType.SUNFLOWER: {
         "cost": 50,
         "hp": 300,
-        "cooldown": 225,      # Fast (7.5 s)
+        "cooldown": 60,      # (2 s)
         "sun_interval": 300,  # produces 50 sun every 10 s (buffed)
         "damage": 0,
         "fire_rate": 0,
@@ -84,21 +84,21 @@ PLANT_STATS: dict[PlantType, dict] = {
     PlantType.PEASHOOTER: {
         "cost": 100,
         "hp": 300,
-        "cooldown": 225,      # Fast (7.5 s)
+        "cooldown": 60,      # (2 s)
         "damage": 30,         # buffed from 20 to 30
         "fire_rate": 45,      # fires every 1.5 s
     },
     PlantType.WALLNUT: {
         "cost": 50,
         "hp": 4000,
-        "cooldown": 450,      # buffed from 900 to 450 (15 s)
+        "cooldown": 120,      # (4 s)
         "damage": 0,
         "fire_rate": 0,
     },
     PlantType.SNOWPEA: {
         "cost": 175,
         "hp": 300,
-        "cooldown": 225,      # Fast (7.5 s)
+        "cooldown": 60,      # (2 s)
         "damage": 30,         # buffed from 20 to 30
         "fire_rate": 45,
         "slow": True,
@@ -106,8 +106,8 @@ PLANT_STATS: dict[PlantType, dict] = {
     PlantType.CHERRYBOMB: {
         "cost": 150,
         "hp": 300,
-        "cooldown": 1500,     # Very Slow (50 s)
-        "damage": 1800,       # instant AOE — kills almost everything
+        "cooldown": 300,     # (10 s)
+        "damage": 1800,       # instant AOE
         "fire_rate": 0,
         "instant": True,
         "aoe_radius": 1,      # cells
@@ -115,7 +115,7 @@ PLANT_STATS: dict[PlantType, dict] = {
     PlantType.REPEATER: {
         "cost": 200,
         "hp": 300,
-        "cooldown": 225,      # Fast (7.5 s)
+        "cooldown": 60,      # (2 s)
         "damage": 20,
         "fire_rate": 45,
         "shots_per_volley": 2,
@@ -123,7 +123,7 @@ PLANT_STATS: dict[PlantType, dict] = {
     PlantType.POTATOMINE: {
         "cost": 25,
         "hp": 300,
-        "cooldown": 450,      # Buffed from 900 to 450 (15 s)
+        "cooldown": 120,      # (4 s)
         "damage": 1800,
         "fire_rate": 0,
         "arm_time": 200,      # Buffed from 450 to 200
@@ -191,15 +191,21 @@ def build_wave_schedule(difficulty: int = 1) -> list[dict]:
     import random
 
     waves: list[dict] = []
-    tick = 300  # start earlier (~10 s)
-    num_waves = 5 + difficulty * 2
+    tick = 150  # start almost immediately (5 seconds)
+    
+    # We want ~50 zombies total for a win. 
+    num_waves = 5 
+    # Zombie counts per wave: 5, 8, 10, 12, 15 (Total = 50)
+    wave_counts = [5, 8, 10, 12, 15]
+    
     for w in range(num_waves):
-        count = 3 + w + difficulty 
+        count = wave_counts[w]
         for _ in range(count):
             row = random.randint(0, ROWS - 1)
             # Make random completely random but biased by difficulty
             roll = random.random()
             progress = w / max(num_waves - 1, 1)
+            
             if roll < 0.05 + 0.05 * progress * difficulty:
                 ztype = ZombieType.BUCKETHEAD
             elif roll < 0.10 + 0.15 * progress * difficulty:
@@ -209,15 +215,15 @@ def build_wave_schedule(difficulty: int = 1) -> list[dict]:
             else:
                 ztype = ZombieType.NORMAL
             
-            # Stagger spawn over 20 seconds (600 ticks)
-            spawn_tick = tick + random.randint(0, 600)
+            # Stagger spawn over 10 seconds (300 ticks)
+            spawn_tick = tick + random.randint(0, 300)
             waves.append({"tick": spawn_tick, "zombies": [(ztype, row)]})
             
-        # flag zombie on big waves
-        if w == num_waves - 1 or (w > 0 and w % 5 == 0):
-            waves.append({"tick": tick + random.randint(0, 200), "zombies": [(ZombieType.FLAG, random.randint(0, ROWS - 1))]})
+        # flag zombie on the final big wave
+        if w == num_waves - 1:
+            waves.append({"tick": tick + random.randint(0, 100), "zombies": [(ZombieType.FLAG, random.randint(0, ROWS - 1))]})
             
-        tick += max(500, 800 - difficulty * 30)
+        tick += 400  # Next wave starts 400 ticks (13.3s) after this wave's base tick
 
     # Sort waves chronologically since we staggered them
     waves.sort(key=lambda x: x["tick"])

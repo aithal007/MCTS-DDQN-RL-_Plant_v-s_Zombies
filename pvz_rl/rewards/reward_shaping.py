@@ -33,7 +33,7 @@ class RewardConfig:
     scheme: RewardScheme = RewardScheme.KILL_PENALTY
 
     # ── Terminal rewards ──
-    win_reward: float = 5000.0
+    win_reward: float = 20000.0
     loss_penalty: float = 300.0
 
     # ── Per-event base rewards ──
@@ -46,7 +46,8 @@ class RewardConfig:
     projectile_hit_reward: float = 5.0  # per projectile hit (Shooters ONLY, cuts out Potato Mine)
     sun_reward: float = 2.0             # per point of sun collected (Sunflowers)
     plant_damage_penalty: float = 0.0   # Set to 0! A Wallnut taking damage is doing its job, don't penalize it!
-    lane_wasting_penalty: float = 50.0  # Massive penalty for placing shooters in rows with no zombies
+    lane_wasting_penalty: float = 25.0  # Penalty for placing shooters in rows with no zombies
+    alive_zombie_penalty: float = 0.5   # Penalty per tick per zombie alive
 
     # ── Time / Potential ──
     tau: float = 0.0
@@ -121,6 +122,9 @@ class RewardShaperWrapper(gym.Wrapper):
         hp_diff = self._prev_total_plant_hp - cur_total_plant_hp
         new_hp_lost = max(0, hp_diff)
 
+        # Count alive zombies for penalty
+        alive_zombies_count = len([z for z in game_state.zombies if z.hp > 0]) if game_state else 0
+
         reward = 0.0
 
         if cfg.scheme == RewardScheme.SPARSE:
@@ -133,18 +137,21 @@ class RewardShaperWrapper(gym.Wrapper):
             reward = self._base_reward(
                 new_kills, new_losses, new_sun_collected, new_projectile_hits, new_wasted_placements, new_hp_lost, is_game_over, is_victory
             )
+            reward -= alive_zombies_count * cfg.alive_zombie_penalty
 
         elif cfg.scheme == RewardScheme.WAVE_BONUS:
             reward = self._base_reward(
                 new_kills, new_losses, new_sun_collected, new_projectile_hits, new_wasted_placements, new_hp_lost, is_game_over, is_victory
             )
             reward += cfg.eta * max(new_waves, 0)
+            reward -= alive_zombies_count * cfg.alive_zombie_penalty
 
         elif cfg.scheme == RewardScheme.TIME_PENALTY:
             reward = self._base_reward(
                 new_kills, new_losses, new_sun_collected, new_projectile_hits, new_wasted_placements, new_hp_lost, is_game_over, is_victory
             )
             reward -= cfg.tau
+            reward -= alive_zombies_count * cfg.alive_zombie_penalty
 
         elif cfg.scheme == RewardScheme.POTENTIAL:
             reward = self._base_reward(

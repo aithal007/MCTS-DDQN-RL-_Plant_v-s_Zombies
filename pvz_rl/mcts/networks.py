@@ -27,13 +27,13 @@ class ResidualBlock(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(dim, dim),
             nn.LayerNorm(dim),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(dim, dim),
             nn.LayerNorm(dim),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return F.relu(x + self.net(x))
+        return F.silu(x + self.net(x))
 
 
 class PvZDualNet(nn.Module):
@@ -65,7 +65,7 @@ class PvZDualNet(nn.Module):
         self.encoder = nn.Sequential(
             nn.Linear(obs_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
-            nn.ReLU(),
+            nn.SiLU(),
         )
 
         # Residual blocks
@@ -76,14 +76,14 @@ class PvZDualNet(nn.Module):
         # Policy head: outputs log-probabilities over actions
         self.policy_head = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(hidden_dim, action_dim),
         )
 
         # Value head: outputs scalar V(s) ∈ [-1, 1]
         self.value_head = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(hidden_dim // 2, 1),
             nn.Tanh(),
         )
@@ -171,22 +171,26 @@ class DuelingDDQN(nn.Module):
         self.action_dim = action_dim
 
         # Shared feature encoder
-        layers = [nn.Linear(obs_dim, hidden_dim), nn.ReLU()]
+        layers = [nn.Linear(obs_dim, hidden_dim), nn.SiLU()]
         for _ in range(num_layers - 1):
-            layers.extend([nn.Linear(hidden_dim, hidden_dim), nn.ReLU()])
+            layers.extend([nn.Linear(hidden_dim, hidden_dim), nn.SiLU()])
         self.features = nn.Sequential(*layers)
 
         # Value stream: V(s)
         self.value_stream = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(hidden_dim // 2, 1),
         )
 
         # Advantage stream: A(s, a)
         self.advantage_stream = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(hidden_dim // 2, action_dim),
         )
 

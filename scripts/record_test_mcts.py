@@ -15,7 +15,7 @@ from pvz_rl.agents.wrappers import FlattenDictObs
 def main():
     print("Loading environment...")
     base_env = PvZSimEnv(
-        difficulty=1,
+        difficulty=6,
         render_mode="rgb_array",
         reward_shaping=False,
     )
@@ -24,10 +24,9 @@ def main():
     flat_env = FlattenDictObs(env)
 
     print("Loading agent (Online DDQN)...")
-    net = DuelingDDQN(obs_dim=144, action_dim=316, hidden_dim=64)
-    # The trainer was tested with hidden_dim=64 in the tiny test
+    net = DuelingDDQN(obs_dim=144, action_dim=316, hidden_dim=256)
     
-    ckpt_path = Path("checkpoints/test_mcts/ddqn_online_final.pt")
+    ckpt_path = Path("checkpoints/mcts_ddqn/ddqn_online_ep17.pt")
     if not ckpt_path.exists():
         print(f"Error: Could not find {ckpt_path}")
         return
@@ -35,13 +34,13 @@ def main():
     net.load_state_dict(torch.load(ckpt_path, map_location="cpu"))
     net.eval()
 
-    output_path = "C:\\Users\\Lenovo\\.gemini\\antigravity\\brain\\e55754d7-ea08-4cac-b71c-2394479ccecf\\mcts_test_run.mp4"
+    output_path = "C:\\Users\\Lenovo\\.gemini\\antigravity\\brain\\963577ad-cced-4b78-a917-48683d226c25\\artifacts\\mcts_ddqn_ep17_diff6.mp4"
     print(f"Recording video to {output_path}...")
     
     writer = None
-    fps = 10
+    fps = 30 # Let's speed up playback so the user doesn't wait as long to watch it
 
-    max_steps = 300
+    max_steps = 3000
     obs, info = flat_env.reset(seed=42)
     
     for step in range(max_steps):

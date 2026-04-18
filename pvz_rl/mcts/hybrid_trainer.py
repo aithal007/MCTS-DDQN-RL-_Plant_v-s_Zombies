@@ -272,8 +272,8 @@ class HybridMCTSDDQNTrainer:
                     f"Len {avg_length:>6.0f} | "
                     f"WR {win_rate:>5.1%} | "
                     f"Kills {avg_kills:>5.1f} | "
-                    f"ε {self._get_epsilon():.3f} | "
-                    f"τ {self.mcts.temperature:.3f} | "
+                    f"eps {self._get_epsilon():.3f} | "
+                    f"tau {self.mcts.temperature:.3f} | "
                     f"{ep_time:.1f}s"
                 )
 
@@ -291,8 +291,9 @@ class HybridMCTSDDQNTrainer:
                     self._save_checkpoint("best")
 
             # --- Periodic checkpoint ---
-            if (episode + 1) % 100 == 0:
-                self._save_checkpoint(f"ep{self.total_episodes}")
+            # --- Periodic checkpoint ---
+            self._save_checkpoint(f"ep{self.total_episodes}")
+            self._save_logs()
 
         # Save final
         self._save_checkpoint("final")
@@ -433,13 +434,13 @@ class HybridMCTSDDQNTrainer:
             log_probs = F.log_softmax(logits, dim=1)
             policy_loss = -(mcts_policies_t * log_probs).sum(dim=1).mean()
 
-            # Value loss: MSE with DDQN target (uses DDQN's better value estimates)
+            # Value loss: Huber (Smooth L1) with DDQN target (uses DDQN's better value estimates)
             with torch.no_grad():
                 value_targets = target_q.unsqueeze(1)
                 # Normalize to [-1, 1]
                 value_targets = torch.clamp(value_targets / 200.0, -1.0, 1.0)
 
-            value_loss = F.mse_loss(values, value_targets)
+            value_loss = F.smooth_l1_loss(values, value_targets)
 
             pv_loss_total = (
                 self.mcts_policy_weight * policy_loss + value_loss

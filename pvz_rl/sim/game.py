@@ -97,7 +97,7 @@ class GameState:
     """Complete mutable game state."""
 
     tick: int = 0
-    sun: int = 1000
+    sun: int = 600
     plants: list[Plant] = field(default_factory=list)
     zombies: list[Zombie] = field(default_factory=list)
     projectiles: list[Projectile] = field(default_factory=list)
