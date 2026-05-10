@@ -16,10 +16,23 @@
 \title{Reinforcement Learning for Tower Defense: A Hybrid MCTS + DDQN Approach to Plants vs.\ Zombies}
 
 \author{
-\IEEEauthorblockN{Author Names Here}
-\IEEEauthorblockA{Department / University \\
-City, Country \\
-email@example.com}
+\IEEEauthorblockN{Parikshith Aithal KV}
+\IEEEauthorblockA{
+BT2024249 \\
+International Institute of Information\\
+Technology Bangalore (IIIT Bangalore) \\
+Bangalore, India \\
+parikshith.aithal@iiitb.ac.in
+}
+\and
+\IEEEauthorblockN{Munjikesh N}
+\IEEEauthorblockA{
+BT2024247 \\
+International Institute of Information\\
+Technology Bangalore (IIIT Bangalore) \\
+Bangalore, India \\
+munjikesh.n@iiitb.ac.in
+}
 }
 
 \maketitle
@@ -131,7 +144,7 @@ The simulator provides no built-in intermediate reward. We define five reward sc
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=\columnwidth]{reward_comparison.png}
+\includegraphics[width=\columnwidth]{1st.png}
 \caption{Reward Scheme Comparison: Demonstrates signal density timelines. Sparse reward provides feedback only at terminal states, whereas the selected Wave Bonus scheme supplies dense, step-by-step signals critical for convergence.}
 \label{fig:rewards}
 \end{figure}
@@ -178,7 +191,7 @@ Our core innovation is the bidirectional communication between a Monte Carlo Tre
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=\columnwidth]{architecture_diagram.png}
+\includegraphics[width=\columnwidth]{ar.png}
 \caption{Architecture Diagram: Bidirectional MCTS$\leftrightarrow$DDQN training loop. The use of two separate replay buffers ensures the DualNet value head correctly distills TD-targets without priority-sampling bias.}
 \label{fig:arch}
 \end{figure}
@@ -292,14 +305,14 @@ Victories & 0/19 & 0/19 \\
 
 \begin{figure*}[htbp]
 \centering
-\includegraphics[width=\textwidth]{training_dashboard.png}
+\includegraphics[width=\textwidth]{dash.png}
 \caption{Interactive Training Dashboard. (Left) Policy and value loss convergence; the declining policy loss is evidence of DualNet learning following the replay buffer fix. (Right) Epsilon and temperature decay. (Bottom) Episode reward over 205 episodes showing a clear upward trend smoothed by a 30-episode rolling window.}
 \label{fig:dashboard}
 \end{figure*}
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=\columnwidth]{training_curves.png}
+\includegraphics[width=\columnwidth]{train.png}
 \caption{Training dynamics over 205 episodes. (a) Episode reward with moving average. (b) Zombies killed per episode. (c) Q-loss on log scale. (d) Linear Epsilon decay.}
 \label{fig:curves}
 \end{figure}
@@ -308,20 +321,22 @@ Victories & 0/19 & 0/19 \\
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=\columnwidth]{reward_distribution.png}
+\includegraphics[width=\columnwidth]{reward.png}
 \caption{Reward distribution histogram split into two halves (ep 1--100 vs ep 101--205) demonstrating the systematic rightward shift in episodic rewards as the agent learns.}
 \label{fig:violin}
 \end{figure}
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=\columnwidth]{kills_vs_length.png}
+\includegraphics[width=\columnwidth]{kill.png}
 \caption{Zombies killed vs.\ episode length scatter plot colored by episode number. Later episodes (yellow) cluster towards higher survival times and higher kill efficiency.}
 \label{fig:scatter}
 \end{figure}
 
 \subsection{Video and Simulation Demonstration}
 A visual representation of the simulation provides essential debugging feedback, displaying the physical grid alongside real-time metrics including: current sun points, score, zombie kill count, current wave progress, game tick, and the number of alive zombies. Videos generated from the training checkpoints show the agent placing Peashooters and Repeaters in zombie-occupied lanes, successfully surviving multiple waves of Normal and Conehead zombies.
+
+\textbf{Supplementary Video Material:} Full gameplay recordings of the agent successfully defending waves during late-stage training episodes can be viewed in our \href{INSERT_YOUR_GOOGLE_DRIVE_LINK_HERE}{Supplementary Google Drive Folder}.
 
 %===================================================================
 \section{Problems Encountered and Solutions}
