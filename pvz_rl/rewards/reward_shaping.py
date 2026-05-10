@@ -47,7 +47,7 @@ class RewardConfig:
     sun_reward: float = 2.0             # per point of sun collected (Sunflowers)
     plant_damage_penalty: float = 0.0   # Set to 0! A Wallnut taking damage is doing its job, don't penalize it!
     lane_wasting_penalty: float = 25.0  # Penalty for placing shooters in rows with no zombies
-    alive_zombie_penalty: float = 0.5   # Penalty per tick per zombie alive
+    alive_zombie_penalty: float = 0.05   # Penalty per tick per zombie alive
 
     # ── Time / Potential ──
     tau: float = 0.0

@@ -6,7 +6,7 @@ difficulty: 1
 reward_scheme: wave_bonus     # sparse, kill_penalty, wave_bonus, time_penalty, potential
 
 # MCTS Parameters
-num_simulations: 50           # tree search rollouts per decision (10-200)
+num_simulations: 10           # tree search rollouts per decision (10-200)
 c_puct: 1.5                  # PUCT exploration constant
 temperature: 1.0              # initial action selection temperature
 temperature_decay: 0.995      # temperature decay per episode
@@ -21,7 +21,7 @@ target_update_freq: 1000      # steps between target net sync
 # Exploration
 epsilon_start: 1.0
 epsilon_end: 0.05
-epsilon_decay_steps: 50000
+epsilon_decay_steps: 500000
 
 # Network Architecture
 hidden_dim: 256               # hidden layer width
@@ -37,7 +37,7 @@ eval_freq: 50                 # evaluate every N episodes
 eval_episodes: 10
 
 # Checkpointing
-checkpoint_dir: checkpoints/mcts_ddqn
-log_dir: runs/mcts_ddqn
+checkpoint_dir: checkpoints/rl_last
+log_dir: runs/rl_last
 seed: 42
 device: cpu                   # cpu or cuda

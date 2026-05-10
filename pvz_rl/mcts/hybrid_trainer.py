@@ -95,7 +95,7 @@ class HybridMCTSDDQNTrainer:
         target_update_freq: int = 1000,
         epsilon_start: float = 1.0,
         epsilon_end: float = 0.05,
-        epsilon_decay_steps: int = 50_000,
+        epsilon_decay_steps: int = 500_000,
         mcts_policy_weight: float = 1.0,
         eval_freq: int = 50,
         eval_episodes: int = 10,
@@ -158,6 +158,7 @@ class HybridMCTSDDQNTrainer:
 
         # Replay buffer
         self.replay_buffer = PrioritizedReplayBuffer(capacity=buffer_size, seed=seed)
+        self.mcts_replay_buffer = ReplayBuffer(capacity=50_000, seed=seed)
 
         # MCTS
         self.mcts = MCTS(
@@ -360,6 +361,11 @@ class HybridMCTSDDQNTrainer:
 
         # Push to replay buffer
         self.replay_buffer.push_many(transitions)
+        
+        # Push MCTS-only transitions to the dedicated buffer
+        mcts_transitions = [t for t in transitions if t.mcts_policy is not None]
+        if mcts_transitions:
+            self.mcts_replay_buffer.push_many(mcts_transitions)
 
         env.close()
 
@@ -426,33 +432,46 @@ class HybridMCTSDDQNTrainer:
         policy_loss_val = 0.0
         value_loss_val = 0.0
 
-        if "mcts_policies" in batch:
-            mcts_policies_t = torch.FloatTensor(batch["mcts_policies"])
-            logits, values = self.policy_value_net(obs_t, masks_t)
+        if len(self.mcts_replay_buffer) >= self.batch_size:
+            mcts_batch = self.mcts_replay_buffer.sample_numpy(self.batch_size)
+            if "mcts_policies" in mcts_batch:
+                obs_mcts = torch.FloatTensor(mcts_batch["obs"])
+                masks_mcts = torch.BoolTensor(mcts_batch["action_masks"])
+                mcts_policies_t = torch.FloatTensor(mcts_batch["mcts_policies"])
 
-            # Policy loss: cross-entropy with MCTS policy
-            log_probs = F.log_softmax(logits, dim=1)
-            policy_loss = -(mcts_policies_t * log_probs).sum(dim=1).mean()
+                logits, values = self.policy_value_net(obs_mcts, masks_mcts)
 
-            # Value loss: Huber (Smooth L1) with DDQN target (uses DDQN's better value estimates)
-            with torch.no_grad():
-                value_targets = target_q.unsqueeze(1)
-                # Normalize to [-1, 1]
-                value_targets = torch.clamp(value_targets / 200.0, -1.0, 1.0)
+                # Policy loss: cross-entropy with MCTS policy
+                log_probs = F.log_softmax(logits, dim=1)
+                policy_loss = -(mcts_policies_t * log_probs).sum(dim=1).mean()
 
-            value_loss = F.smooth_l1_loss(values, value_targets)
+                # Value loss: Huber (Smooth L1) with DDQN target
+                with torch.no_grad():
+                    next_obs_mcts = torch.FloatTensor(mcts_batch["next_obs"])
+                    rewards_mcts = torch.FloatTensor(mcts_batch["rewards"])
+                    dones_mcts = torch.FloatTensor(mcts_batch["dones"])
+                    
+                    next_q_on = self.online_q_net(next_obs_mcts)
+                    next_acts = next_q_on.argmax(dim=1)
+                    next_q_tgt = self.target_q_net(next_obs_mcts)
+                    next_q_val = next_q_tgt.gather(1, next_acts.unsqueeze(1)).squeeze(1)
+                    
+                    mcts_target_q = rewards_mcts + self.gamma * next_q_val * (1.0 - dones_mcts)
+                    value_targets = torch.clamp(mcts_target_q.unsqueeze(1) / 200.0, -1.0, 1.0)
 
-            pv_loss_total = (
-                self.mcts_policy_weight * policy_loss + value_loss
-            )
+                value_loss = F.smooth_l1_loss(values, value_targets)
 
-            self.pv_optimizer.zero_grad()
-            pv_loss_total.backward()
-            torch.nn.utils.clip_grad_norm_(self.policy_value_net.parameters(), max_norm=10.0)
-            self.pv_optimizer.step()
+                pv_loss_total = (
+                    self.mcts_policy_weight * policy_loss + value_loss
+                )
 
-            policy_loss_val = policy_loss.item()
-            value_loss_val = value_loss.item()
+                self.pv_optimizer.zero_grad()
+                pv_loss_total.backward()
+                torch.nn.utils.clip_grad_norm_(self.policy_value_net.parameters(), max_norm=10.0)
+                self.pv_optimizer.step()
+
+                policy_loss_val = policy_loss.item()
+                value_loss_val = value_loss.item()
 
         return {
             "q_loss": q_loss.item(),

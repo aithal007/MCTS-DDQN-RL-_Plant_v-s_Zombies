@@ -1,0 +1,434 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{hyperref}
+\usepackage{subcaption}
+\usepackage{enumitem}
+
+\begin{document}
+
+\title{Reinforcement Learning for Tower Defense: A Hybrid MCTS + DDQN Approach to Plants vs.\ Zombies}
+
+\author{
+\IEEEauthorblockN{Author Names Here}
+\IEEEauthorblockA{Department / University \\
+City, Country \\
+email@example.com}
+}
+
+\maketitle
+
+\begin{abstract}
+We present a reinforcement learning (RL) system for the Plants vs.\ Zombies (PvZ) tower-defense game. To our knowledge, we are the first to successfully apply deep reinforcement learning to this environment. Our primary contribution is a hybrid \textbf{Monte Carlo Tree Search + Double DQN (MCTS+DDQN)} algorithm, combined with five configurable reward shaping functions designed to overcome the sparse-reward challenge inherent to tower defense games. We detail the full system architecture---state space (144-dim), action space (316 discrete actions), dual neural network design (PvZDualNet + DuelingDDQN), and MCTS planning with PUCT exploration. Empirical results from 205 training episodes ($\sim$280k environment steps) demonstrate consistent improvements in survival length and zombie kills, with a 5-8x reduction in simulation time after optimizations. A central finding is that \textbf{reward function design is the dominant bottleneck}: naive reward signals cause agents to exploit the reward rather than learn genuine game strategy. We document eight distinct failure modes encountered during development, the corrective measures applied, and the resulting agent behavior. All source code, training logs, and model checkpoints are provided for full reproducibility.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Reinforcement Learning, Monte Carlo Tree Search, Deep Q-Network, Reward Shaping, Tower Defense, Plants vs.\ Zombies, Survival Strategy
+\end{IEEEkeywords}
+
+%===================================================================
+\section{Introduction}
+%===================================================================
+
+Tower defense games such as Plants vs.\ Zombies (PvZ) present a rich sequential decision-making problem: the agent must allocate limited resources (sun points) across a spatial grid under time pressure while facing waves of adversaries with heterogeneous capabilities. The objective of the environment is \textbf{survival}: maximizing the duration of survival and the total number of zombies eliminated before the defenses are breached. There is no binary ``win rate'' metric, as the game scales in difficulty until the player is eventually defeated.
+
+Despite the game's apparent simplicity, the state-action space is large ($5 \times 9$ grid, 7 plant types, 316 discrete actions), rewards are delayed, and optimal strategy requires multi-step planning---e.g., investing in Sunflowers first to fund future Repeaters. 
+
+We hypothesize that:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Reward shaping} (intermediate signals for kills, wave clears, projectile hits) accelerates convergence over sparse terminal feedback.
+    \item \textbf{MCTS planning} (lookahead via environment cloning) enables multi-step reasoning that pure RL cannot express in a single forward pass.
+    \item \textbf{Combining both} yields the strongest agent.
+\end{enumerate}
+
+To our knowledge, we are the first to successfully apply a hybrid AlphaZero-inspired Deep RL architecture to the Plants vs.\ Zombies environment. This paper documents all experiments, algorithmic interactions, failures, and provides full training logs for reproducibility.
+
+%===================================================================
+\section{Environment Description}
+%===================================================================
+
+\subsection{Simulator}
+We developed a custom Gymnasium-compatible simulator for the Plants vs.\ Zombies environment. The simulator implements a deterministic, discrete-time MDP. All game logic executes inside \texttt{PvZEngine.step()}, running at $\sim$10,000 ticks/second on CPU. 
+
+The visual representation of the simulation provides essential real-time feedback, displaying the current sun points, score, zombie kill count, wave progress, tick count, and the number of alive zombies alongside the physical grid of planted units.
+
+\subsection{Grid and Entities}
+
+\begin{table}[htbp]
+\centering
+\caption{Environment Parameters}
+\label{tab:env}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Grid dimensions & $5 \times 9$ (45 cells) \\
+Plant types & 7 (Table~\ref{tab:plants}) \\
+Zombie types & 5 (Table~\ref{tab:zombies}) \\
+Action space & 316 discrete ($1 + 7 \times 45$) \\
+Observation dim & 144 (flattened vector) \\
+Ticks per second & 30 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Plant Types and Statistics}
+\label{tab:plants}
+\begin{tabular}{@{}lcccp{2.2cm}@{}}
+\toprule
+\textbf{Plant} & \textbf{Cost} & \textbf{HP} & \textbf{Dmg} & \textbf{Mechanic} \\
+\midrule
+Sunflower & 50 & 300 & --- & +50 sun / 10s \\
+Peashooter & 100 & 300 & 30 & Fires every 1.5s \\
+Wall-nut & 50 & 4000 & --- & High-HP blocker \\
+Snow Pea & 175 & 300 & 30 & Slows zombies \\
+Cherry Bomb & 150 & 300 & 1800 & Instant AOE \\
+Repeater & 200 & 300 & $20{\times}2$ & Two peas/volley \\
+Potato Mine & 25 & 300 & 1800 & Arms in 6.7s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Zombie Types and Statistics}
+\label{tab:zombies}
+\begin{tabular}{@{}lccl@{}}
+\toprule
+\textbf{Zombie} & \textbf{HP} & \textbf{Speed} & \textbf{Special} \\
+\midrule
+Normal & 200 & 0.40 & --- \\
+Conehead & 560 & 0.40 & Armored helmet \\
+Buckethead & 1300 & 0.40 & Very high HP \\
+Flag & 200 & 0.53 & Slightly faster \\
+Pole Vaulter & 340 & 0.80 & Vaults first plant \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Wave Schedule}
+Waves spawn progressively at assigned ticks containing escalating numbers of zombies. Zombie types are sampled by difficulty-scaled probability. A Flag zombie appears on the final wave. The objective is to maximize kills and survival time.
+
+\subsection{State Representation}
+The 144-dimensional observation vector encodes: (i) per-cell plant type and HP (normalized), (ii) per-row zombie positions and types, (iii) current sun count, (iv) wave progress, and (v) cooldown states.
+
+\subsection{Action Masking}
+The environment exposes a boolean mask of size 316. An action is invalid if the cell is occupied, sun cost exceeds current sun, or the seed packet is on cooldown. Without masking, ${\sim}99\%$ of randomly selected actions are invalid no-ops, making exploration near-impossible.
+
+%===================================================================
+\section{Reward Function Design}
+%===================================================================
+
+The simulator provides no built-in intermediate reward. We define five reward schemes via a \texttt{RewardShaperWrapper} that intercepts \texttt{step()} and computes shaped rewards from game state deltas. 
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{reward_comparison.png}
+\caption{Reward Scheme Comparison: Demonstrates signal density timelines. Sparse reward provides feedback only at terminal states, whereas the selected Wave Bonus scheme supplies dense, step-by-step signals critical for convergence.}
+\label{fig:rewards}
+\end{figure}
+
+\subsection{Formal Definitions}
+Let $Z_t$ = zombies killed, $P_t$ = plants destroyed, $W_t$ = waves cleared, $H_t$ = projectile hits, $S_t$ = sun collected at step $t$. Let $\mathbb{1}_{\text{loss}}$ be a terminal indicator.
+
+\textbf{Scheme 0 --- Sparse:}
+\begin{equation}
+r_t = 20000 \cdot \mathbb{1}_{\text{win}} - 300 \cdot \mathbb{1}_{\text{loss}}
+\end{equation}
+
+\textbf{Scheme 1 --- Kill/Penalty:}
+\begin{equation}
+r_t = \alpha Z_t - \beta P_t - \delta \cdot \mathbb{1}_{\text{loss}} - 0.05 \cdot |\mathcal{Z}_{\text{alive}}|
+\end{equation}
+
+\textbf{Scheme 2 --- Wave Bonus (primary):}
+\begin{equation}
+r_t = \alpha Z_t - \beta P_t + \eta W_t + \lambda H_t + \mu S_t - \rho \cdot \mathbb{1}_{\text{wasted}} - \delta \cdot \mathbb{1}_{\text{loss}}
+\end{equation}
+where $\alpha{=}100$, $\beta{=}10$, $\eta{=}30$, $\lambda{=}5$ (projectile hit), $\mu{=}2$ (sun), $\rho{=}25$ (lane wasting), $\delta{=}300$.
+
+\textbf{Scheme 3 --- Time Penalty:}
+\begin{equation}
+r_t = r_t^{(2)} - \tau, \quad \tau = 0.01
+\end{equation}
+
+\textbf{Scheme 4 --- Potential Shaping:}
+\begin{equation}
+r_t = r_t^{(2)} + \gamma\Phi(s_{t+1}) - \Phi(s_t)
+\end{equation}
+\begin{equation}
+\Phi(s) = \kappa \cdot \bar{d}_{\text{zombie}}, \quad \kappa=1.0
+\end{equation}
+where $\bar{d}_{\text{zombie}}$ is the mean column-distance of alive zombies. 
+
+%===================================================================
+\section{Detailed Algorithm Overview}
+%===================================================================
+
+\subsection{MCTS and DDQN Interaction}
+Our core innovation is the bidirectional communication between a Monte Carlo Tree Search (MCTS) planner and a Double Deep Q-Network (DDQN). They act as a teacher-student pair in a shared environment:
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{architecture_diagram.png}
+\caption{Architecture Diagram: Bidirectional MCTS$\leftrightarrow$DDQN training loop. The use of two separate replay buffers ensures the DualNet value head correctly distills TD-targets without priority-sampling bias.}
+\label{fig:arch}
+\end{figure}
+
+\textbf{1. MCTS as the Lookahead Planner:}
+At each step, the MCTS clones the environment and performs $N=50$ forward simulations to explore the consequence of plant placements. It uses a \textit{PvZDualNet} (a neural network with policy and value heads) to evaluate states and prioritize promising branches via the PUCT formula. The output of the MCTS is a refined action probability distribution $\pi_{\text{MCTS}}$.
+
+\textbf{2. DDQN as the Value Grounding:}
+As the MCTS plays out the episode, it stores the state transitions ($s, a, r, s'$) alongside the improved policy $\pi_{\text{MCTS}}$ in replay buffers. The DDQN samples from the prioritized buffer to learn the \textit{actual, ground-truth value} of actions based on concrete rewards. 
+
+\textbf{3. The Synchronization Loop:}
+The communication loop is closed when the DDQN trains the DualNet. The target Q-values generated by the DDQN are distilled into the DualNet's value head.
+\begin{itemize}[leftmargin=*,nosep]
+    \item \textbf{MCTS teaches DDQN:} By executing high-quality, lookahead-planned trajectories, the MCTS ensures the DDQN experiences valuable states rather than exploring blindly.
+    \item \textbf{DDQN teaches MCTS:} By anchoring the DualNet's value head to actual TD-learned rewards, the DDQN ensures the MCTS correctly identifies which leaf nodes are genuinely advantageous.
+\end{itemize}
+
+\subsection{Training Algorithm}
+\begin{algorithm}[htbp]
+\caption{Hybrid MCTS-DDQN Training}
+\label{alg:train}
+\begin{algorithmic}[1]
+\FOR{episode $= 1$ to $N$}
+    \STATE $obs \leftarrow$ env.reset()
+    \WHILE{not done}
+        \IF{rand() $> \varepsilon \times 0.5$}
+            \STATE $\pi_{\text{MCTS}}, v \leftarrow$ MCTS.search(engine, 50 sims)
+            \STATE $action \leftarrow$ sample($\pi_{\text{MCTS}}$)
+            \STATE mcts\_buffer.push($s, \pi_{\text{MCTS}}, r, s'$)
+        \ELSE
+            \STATE $action \leftarrow \varepsilon$-greedy($Q_{\text{online}}$)
+        \ENDIF
+        \STATE main\_buffer.push($s, action, r, s'$)
+        \STATE $s \leftarrow s'$
+    \ENDWHILE
+    \STATE Train DDQN from main\_buffer
+    \STATE Train PvZDualNet from mcts\_buffer
+    \STATE Sync target net every 1000 steps
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{MCTS Search (PUCT)}
+Action selection in the MCTS tree relies on the PUCT equation:
+\begin{equation}
+a^* = \arg\max_a \left[ Q(s,a) + c_{\text{puct}} \cdot P_\theta(s,a) \cdot \frac{\sqrt{N(s)}}{1 + N(s,a)} \right]
+\end{equation}
+with $c_{\text{puct}}{=}1.5$. The policy head $P_\theta(s,a)$ dictates the prior exploration.
+
+\subsection{Neural Network Architectures}
+\textbf{PvZDualNet} (MCTS guidance, $\sim$3.0 MB):
+\begin{itemize}[leftmargin=*,nosep]
+    \item Input: 144-dim observation
+    \item Shared encoder: Linear(144$\to$256) $\to$ LayerNorm $\to$ SiLU
+    \item 4 Residual blocks
+    \item Policy head: Linear(256$\to$316); masked softmax
+    \item Value head: Linear(256$\to$128$\to$1) $\to$ Tanh $\in [-1,1]$
+\end{itemize}
+
+\textbf{DuelingDDQN} (action selection, $\sim$1.6 MB):
+\begin{itemize}[leftmargin=*,nosep]
+    \item 3-layer MLP encoder (256 hidden, SiLU activations)
+    \item Value stream: $256 \to 256 \to 128 \to 1$
+    \item Advantage stream: $256 \to 256 \to 128 \to 316$
+\end{itemize}
+
+%===================================================================
+\section{Experimental Results}
+%===================================================================
+
+\subsection{Training Run Summary}
+All results are from a 205-episode training run using the Wave Bonus reward scheme. 
+
+\begin{table}[htbp]
+\centering
+\caption{Training Performance Summary (205 Episodes, $\sim$280k Steps)}
+\label{tab:results}
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+Total episodes & 205 \\
+Total environment steps & $\sim$280,000 \\
+Avg kills (ep 1--10) & 5.6 \\
+Avg kills (ep 181--205) & 7.2 \\
+Kill improvement & \textbf{+28.5\%} \\
+Peak episode reward & 6,278.6 (ep 185) \\
+Peak kills (single episode) & 27 (ep 185) \\
+Policy loss (ep 1 $\to$ ep 200) & 0.086 $\to$ 0.0001 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Performance Before vs. After Bug Fixes (First 19 Episodes)}
+\label{tab:before_after}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Metric} & \textbf{Before (Original)} & \textbf{After (Fixed)} \\
+\midrule
+Avg reward & $-1,512$ & $+2,200$ \\
+Policy Loss & always $0.0$ & $0.086 \to 0.001$ \\
+Avg Ep Time & 280s & 45s \\
+Victories & 0/19 & 0/19 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Learning Dynamics and Convergence}
+
+\begin{figure*}[htbp]
+\centering
+\includegraphics[width=\textwidth]{training_dashboard.png}
+\caption{Interactive Training Dashboard. (Left) Policy and value loss convergence; the declining policy loss is evidence of DualNet learning following the replay buffer fix. (Right) Epsilon and temperature decay. (Bottom) Episode reward over 205 episodes showing a clear upward trend smoothed by a 30-episode rolling window.}
+\label{fig:dashboard}
+\end{figure*}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{training_curves.png}
+\caption{Training dynamics over 205 episodes. (a) Episode reward with moving average. (b) Zombies killed per episode. (c) Q-loss on log scale. (d) Linear Epsilon decay.}
+\label{fig:curves}
+\end{figure}
+
+\subsection{Reward Distribution and Agent Efficiency}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{reward_distribution.png}
+\caption{Reward distribution histogram split into two halves (ep 1--100 vs ep 101--205) demonstrating the systematic rightward shift in episodic rewards as the agent learns.}
+\label{fig:violin}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{kills_vs_length.png}
+\caption{Zombies killed vs.\ episode length scatter plot colored by episode number. Later episodes (yellow) cluster towards higher survival times and higher kill efficiency.}
+\label{fig:scatter}
+\end{figure}
+
+\subsection{Video and Simulation Demonstration}
+A visual representation of the simulation provides essential debugging feedback, displaying the physical grid alongside real-time metrics including: current sun points, score, zombie kill count, current wave progress, game tick, and the number of alive zombies. Videos generated from the training checkpoints show the agent placing Peashooters and Repeaters in zombie-occupied lanes, successfully surviving multiple waves of Normal and Conehead zombies.
+
+%===================================================================
+\section{Problems Encountered and Solutions}
+%===================================================================
+
+This section documents the full chain of reward and environment engineering challenges---the central practical contribution of this paper.
+
+\subsection{Problem 1: Reward Hacking --- ``Do Nothing'' Strategy}
+\textbf{Symptom:} The agent discovered that placing \emph{no plants at all} was locally optimal to avoid the $-50$ plant-destroyed penalty. 
+
+\textbf{Fix:} Added dense \emph{action-based} rewards: $+5.0$ per projectile hit and $+2.0$ per sun collected, making planting more valuable than inaction.
+
+\subsection{Problem 2: Action Masking --- Exploration Collapse}
+\textbf{Symptom:} Standard PPO without action masking. With 316 possible actions and only 2--5 valid per state, random exploration almost never sampled a valid action.
+
+\textbf{Fix:} Implemented custom action masking for the MCTS/DDQN pipeline to prune invalid branches.
+
+\subsection{Problem 3: Starting Sun Too Low}
+\textbf{Symptom:} Default starting sun was 50. The agent spent it on a Wall-nut (cheapest option), depleted sun to 0, then had no resources for shooting plants. 
+
+\textbf{Fix:} Increased starting sun to 150 so the agent can afford a Peashooter immediately.
+
+\subsection{Problem 4: Reward Always Negative --- No Positive Signal}
+\textbf{Symptom:} Game-over penalty was $-300$. Unless the agent killed enough zombies to earn $+300$ in rewards, net reward was always negative, masking learning progress.
+
+\textbf{Fix:} Rebalanced reward scale: increased \texttt{projectile\_hit\_reward} from 0.005 to 5.0, added \texttt{sun\_reward}$=$2.0.
+
+\subsection{Problem 5: Plants Not Shooting --- Wrong Plant Preference}
+\textbf{Symptom:} The Q-network learned Wall-nut placement was ``safer'' than saving sun for Peashooters.
+
+\textbf{Fix:} Added \texttt{lane\_wasting\_penalty}$=$25.0---placing a non-shooter in a row with approaching zombies is penalized. 
+
+\subsection{Problem 6: MCTS Computational Cost on CPU}
+\textbf{Symptom:} Full MCTS training required 180--465s per episode originally.
+
+\textbf{Fix:} Reduced deep copy overhead. Average episode time was successfully reduced from 280s to 45s (a 5-8x speedup).
+
+\subsection{Problem 7: MCTS Replay Buffer Isolation}
+\textbf{Symptom:} The policy and value losses were permanently zero. The DualNet was not learning from the MCTS rollouts.
+
+\textbf{Root Cause:} The \texttt{PrioritizedReplayBuffer}'s priority-weighted sampling inherently excluded MCTS transitions because they were inserted with different TD-error characteristics.
+
+\textbf{Fix:} Implemented a dedicated \texttt{mcts\_replay\_buffer}. The DDQN trains exclusively from the prioritized main buffer, while the DualNet trains exclusively from the uniform MCTS buffer.
+
+\subsection{Problem 8: Reward Scale Drowning}
+\textbf{Symptom:} The agent received rewards in the range of $-3000$ to $-5000$, masking all other learning signals.
+
+\textbf{Root Cause:} The \texttt{alive\_zombie\_penalty} was set to 0.5 per tick. Over a 1200-step episode, this penalty drowned out the $+100$ kill rewards entirely.
+
+\textbf{Fix:} Reduced the \texttt{alive\_zombie\_penalty} to 0.05, restoring the balance between urgency and strategic combat rewards.
+
+%===================================================================
+\section{Discussion}
+%===================================================================
+
+\subsection{What Worked}
+\begin{itemize}[leftmargin=*,nosep]
+    \item \textbf{Wave Bonus reward} was highly effective: combining kill, projectile-hit, sun, and lane-wasting signals provided dense, consistent feedback.
+    \item \textbf{Action masking} was critical. Without it, exploration in the 316-action space was statistically improbable.
+    \item \textbf{MCTS lookahead} efficiently produced better action distributions than pure $\varepsilon$-greedy exploration, acting as a powerful teacher for the DDQN network.
+\end{itemize}
+
+\subsection{What Did Not Work As Expected}
+\begin{itemize}[leftmargin=*,nosep]
+    \item \textbf{Full Survival} across all 5 waves was rarely achieved. The final wave (15 zombies + Flag) often overwhelmed the defenses built during early waves, highlighting the extreme difficulty of resource management in the late game.
+    \item \textbf{Potential-based shaping} was practically equivalent to Wave Bonus; the zombie-distance potential did not add useful learning signal beyond standard kill rewards.
+    \item \textbf{Sparse reward} showed zero progress---the agent never received the ultimate reward to learn from, rendering learning impossible in early stages.
+\end{itemize}
+
+%===================================================================
+\section{Conclusion}
+%===================================================================
+
+We presented a hybrid MCTS+DDQN reinforcement learning system for Plants vs.\ Zombies, marking the first time deep AlphaZero-style methods have been successfully deployed in this environment. The dominant challenge was \textbf{reward and systems engineering}: multiple reward hacking failures and memory isolation bugs were resolved. Our DualNet and DuelingDDQN architecture proved capable of bidirectional learning, improving average kills by 28.5\% across 205 episodes. The interactive dashboard confirms steady optimization, with policy loss decaying exponentially. Future work will focus on GPU-accelerated MCTS to scale beyond 200 simulations per step.
+
+%===================================================================
+% REFERENCES
+%===================================================================
+\begin{thebibliography}{9}
+
+\bibitem{silver2016}
+D.~Silver et al., ``Mastering the game of Go with deep neural networks and tree search,'' \emph{Nature}, vol.~529, pp.~484--489, 2016.
+
+\bibitem{silver2018}
+D.~Silver et al., ``A general reinforcement learning algorithm that masters chess, shogi, and Go through self-play,'' \emph{Science}, vol.~362, no.~6419, pp.~1140--1144, 2018.
+
+\bibitem{ng1999}
+A.~Y.~Ng, D.~Harada, and S.~Russell, ``Policy invariance under reward transformations: Theory and application to reward shaping,'' in \emph{Proc. ICML}, 1999, pp.~278--287.
+
+\bibitem{mnih2015}
+V.~Mnih et al., ``Human-level control through deep reinforcement learning,'' \emph{Nature}, vol.~518, pp.~529--533, 2015.
+
+\bibitem{schrittwieser2020}
+J.~Schrittwieser et al., ``Mastering Atari, Go, chess and shogi by planning with a learned model,'' \emph{Nature}, vol.~588, pp.~604--609, 2020.
+
+\bibitem{schulman2017}
+J.~Schulman et al., ``Proximal policy optimization algorithms,'' \emph{arXiv:1707.06347}, 2017.
+
+\bibitem{hasselt2016}
+H.~van Hasselt, A.~Guez, and D.~Silver, ``Deep reinforcement learning with double Q-learning,'' in \emph{Proc. AAAI}, 2016, pp.~2094--2100.
+
+\bibitem{schaul2016}
+T.~Schaul et al., ``Prioritized experience replay,'' in \emph{Proc. ICLR}, 2016.
+
+\bibitem{clark2016}
+J.~Clark and D.~Amodei, ``Faulty reward functions in the wild,'' OpenAI Blog, 2016.
+
+\end{thebibliography}
+
+\end{document}

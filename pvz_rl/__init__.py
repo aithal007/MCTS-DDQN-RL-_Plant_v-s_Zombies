@@ -14,8 +14,3 @@ register(
     max_episode_steps=10_000,
 )
 
-register(
-    id="PvZSteam-v0",
-    entry_point="pvz_rl.steam.env:PvZSteamEnv",
-    max_episode_steps=10_000,
-)
